@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, Check, ChevronDown, Instagram, LoaderCircle, LockKeyhole, Menu, MessageCircle, Minus, Plus, ShoppingBag, Trash2, X } from 'lucide-react';
 import './style.css';
+import './bag-popup.css';
 
 function Link({to,children,...props}){const href=to.startsWith('/')?`${import.meta.env.BASE_URL}${to.slice(1)}`:to;return <a href={href} {...props}>{children}</a>}
 
@@ -34,11 +35,11 @@ function StoreProvider({children}){
  const refreshProducts=async(silent=false)=>{if(!silent)setProductsState('loading');if(import.meta.env.BASE_URL!=='/'||window.location.hostname.endsWith('github.io')){setProducts(staticProducts);setProductsError('');setProductsState('ready');return}try{const data=await api('/api/products');setProducts(data.products);setProductsError('');setProductsState('ready')}catch(e){setProductsError(e.message);setProductsState('error')}};
  useEffect(()=>{refreshProducts()},[]);
  useEffect(()=>{localStorage.setItem('whisko-cart-v1',JSON.stringify(cart))},[cart]);
- useEffect(()=>{if(!notice)return;const t=setTimeout(()=>setNotice(''),2600);return()=>clearTimeout(t)},[notice]);
- const add=(product,options=defaultOptions,quantity=1)=>{if(product.pricePiasters!==null&&product.stock<1){setNotice('This matcha is currently sold out.');return}setCart(old=>{const found=old.find(x=>x.productId===product.id&&JSON.stringify(x.options)===JSON.stringify(options));if(found)return old.map(x=>x===found?{...x,quantity:Math.min(20,x.quantity+quantity)}:x);return [...old,{productId:product.id,quantity,options}]});setNotice(`${product.name} added to your bag.`)};
+ useEffect(()=>{if(!notice)return;const t=setTimeout(()=>setNotice(''),3600);return()=>clearTimeout(t)},[notice]);
+ const add=(product,options=defaultOptions,quantity=1)=>{if(product.pricePiasters!==null&&product.stock<1){setNotice({type:'error',title:'Currently unavailable',detail:'This matcha is sold out.'});return}setCart(old=>{const found=old.find(x=>x.productId===product.id&&JSON.stringify(x.options)===JSON.stringify(options));if(found)return old.map(x=>x===found?{...x,quantity:Math.min(20,x.quantity+quantity)}:x);return [...old,{productId:product.id,quantity,options}]});setNotice({type:'success',title:'Added to your bag',detail:product.name})};
  const update=(productId,options,quantity)=>setCart(old=>quantity<1?old.filter(x=>x.productId!==productId||JSON.stringify(x.options)!==JSON.stringify(options)):old.map(x=>x.productId===productId&&JSON.stringify(x.options)===JSON.stringify(options)?{...x,quantity:Math.min(20,quantity)}:x));
  const value=useMemo(()=>({products,productsState,productsError,refreshProducts,cart,setCart,add,update,notice}),[products,productsState,productsError,cart,notice]);
- return <StoreContext.Provider value={value}>{children}{notice&&<div role="status" className="toast">{notice}</div>}</StoreContext.Provider>
+ return <StoreContext.Provider value={value}>{children}{notice&&<div role="status" aria-live="polite" className={`bag-popup ${notice.type}`} key={`${notice.title}-${notice.detail}`}><span className="bag-popup-icon">{notice.type==='success'?<Check size={19}/>:<X size={18}/>}</span><span className="bag-popup-copy"><b>{notice.title}</b><small>{notice.detail}</small></span>{notice.type==='success'&&<Link className="bag-popup-action" to="/cart">VIEW BAG <ArrowRight size={14}/></Link>}<button className="bag-popup-close" type="button" aria-label="Dismiss message" onClick={()=>setNotice('')}><X size={16}/></button></div>}</StoreContext.Provider>
 }
 const useStore=()=>useContext(StoreContext);
 function Reveal({children,className=''}){const ref=React.useRef(null);useEffect(()=>{const el=ref.current;if(!el)return;if(!('IntersectionObserver'in window)){el.classList.add('visible');return}const io=new IntersectionObserver(([entry])=>{if(entry.isIntersecting){el.classList.add('visible');io.disconnect()}},{threshold:.12});io.observe(el);return()=>io.disconnect()},[]);return <div ref={ref} className={`reveal ${className}`}>{children}</div>}
