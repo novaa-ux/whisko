@@ -7,8 +7,9 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 let serverPromise;
 
 async function getServer(){
-  if(!process.env.TURSO_DATABASE_URL||!process.env.TURSO_AUTH_TOKEN){
-    throw new Error('Configure TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in the Vercel project settings.');
+  const missingDatabaseSettings=['TURSO_DATABASE_URL','TURSO_AUTH_TOKEN'].filter(name=>!process.env[name]);
+  if(missingDatabaseSettings.length){
+    throw Object.assign(new Error('Missing required Vercel database environment variables.'),{missingDatabaseSettings});
   }
   if(!serverPromise){
     serverPromise=(async()=>{
@@ -39,7 +40,10 @@ export default async function handler(req,res){
     res.statusCode=503;
     res.setHeader('Content-Type','application/json; charset=utf-8');
     res.setHeader('Cache-Control','no-store');
-    res.end(JSON.stringify({error:'The API could not start. Check the Vercel function logs and database environment settings.'}));
+    const missing=error.missingDatabaseSettings;
+    res.end(JSON.stringify({error:missing?.length
+      ? `Add these variables in Vercel Project Settings > Environment Variables: ${missing.join(', ')}.`
+      : 'The API database could not connect. Check the Vercel function logs and confirm the Turso URL and token are valid.'}));
     return;
   }
   await new Promise((resolve,reject)=>{

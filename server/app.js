@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
-import { createPayment } from './payments/index.js';
 
 const now=()=>new Date().toISOString();
 const fail=(status,message)=>Object.assign(new Error(message),{status});
@@ -124,7 +123,6 @@ async function toOrder(db,order){
     id:order.id,
     code:order.code,
     customer:{name:order.customer_name,phone:order.customer_phone,address:order.delivery_address},
-    paymentMethod:order.payment_method,
     status:order.status,
     totalPiasters:order.subtotal_piasters,
     createdAt:order.created_at,
@@ -348,7 +346,6 @@ export async function createServer({db,env=process.env,rootDir=process.cwd()}){
       if(customer.name.length<2||customer.name.length>100)throw fail(400,'Enter a valid name.');
       if(!/^\+?[0-9][0-9\s()\-.]{6,22}$/.test(customer.phone))throw fail(400,'Enter a valid phone number.');
       if(customer.address.length<10||customer.address.length>500)throw fail(400,'Enter a delivery address with at least 10 characters.');
-      if(body.paymentMethod!=='cash_on_delivery')throw fail(400,'Cash on delivery is the available payment method.');
       const seen=new Set();
       const items=body.items.map(item=>{
         if(!item||typeof item.productId!=='string'||!(/^[0-9a-f-]{36}$/i.test(item.productId)))throw fail(400,'Refresh your bag and check the selected drinks.');
@@ -374,8 +371,6 @@ export async function createServer({db,env=process.env,rootDir=process.cwd()}){
           total+=line;
           selected.push({product,item,line});
         }
-        const payment=createPayment(body.paymentMethod,{amountPiasters:total});
-        if(payment.method!=='cash_on_delivery')throw fail(400,'Payment method is unavailable.');
         await run(tx,`INSERT INTO orders(id,code,confirmation_token_hash,customer_name,customer_phone,delivery_address,payment_method,status,subtotal_piasters)
           VALUES(?,?,?,?,?,?,'cash_on_delivery','pending',?)`,id,code,tokenHash,customer.name,customer.phone,customer.address,total);
         for(const{product,item,line}of selected){
@@ -384,7 +379,7 @@ export async function createServer({db,env=process.env,rootDir=process.cwd()}){
           await run(tx,'INSERT INTO order_items(id,order_id,product_id,product_name,image_url,unit_price_piasters,quantity,options_json,line_total_piasters) VALUES(?,?,?,?,?,?,?,?,?)',crypto.randomUUID(),id,product.id,product.name,product.image_url,product.price_piasters,item.quantity,JSON.stringify(item.options),line);
         }
       });
-      return send(res,201,{order:{code,confirmationToken:token,totalPiasters:total,status:'pending',paymentMethod:'cash_on_delivery'}});
+      return send(res,201,{order:{code,confirmationToken:token,totalPiasters:total,status:'pending'}});
     }
     match=pathname.match(/^\/api\/orders\/([A-Z0-9-]+)$/);
     if(method==='GET'&&match){
