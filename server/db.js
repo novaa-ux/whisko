@@ -3,16 +3,21 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const catalogSeed = [
-  ['classic-matcha','Classic Matcha','01_Classic_Matcha.jpg','The original WHISKO cup: clean, creamy matcha with a fresh finish.'],
-  ['strawberry-matcha','Strawberry Matcha','02_Strawberry_Matcha.jpg','Sweet strawberry meets earthy matcha in a bright, layered favorite.'],
-  ['mango-matcha','Mango Matcha','03_Mango_Matcha.jpg','Juicy mango and smooth matcha, made for a little sunshine.'],
-  ['vanilla-matcha','Vanilla Matcha','04_Vanilla_Matcha.jpg','A soft vanilla note rounds out our freshly whisked matcha.'],
-  ['caramel-matcha','Caramel Matcha','05_Caramel_Matcha.jpg','Toasty caramel folded into cool, vibrant matcha.'],
-  ['blueberry-matcha','Blueberry Matcha','06_Blueberry_Matcha.jpg','Juicy blueberry, creamy milk, and bright green matcha.'],
-  ['coconut-matcha','Coconut Matcha','07_Coconut_Matcha.jpg','A mellow coconut finish with the lift of real matcha.'],
-  ['pistachio-matcha','Pistachio Matcha','08_Pistachio_Matcha.jpg','Nutty pistachio and smooth matcha in one indulgent pour.'],
-  ['chocolate-matcha','Chocolate Matcha','09_Chocolate_Matcha.jpg','Deep chocolate balances the gentle bitterness of matcha.'],
-  ['raspberry-matcha','Raspberry Matcha','10_Raspberry_Matcha.jpg','A bright raspberry layer with our signature matcha.'],
+  ['classic-matcha','Classic Matcha','01_Classic_Matcha.jpg','The original WHISKO cup: clean, creamy matcha with a fresh finish.',9500],
+  ['strawberry-matcha','Strawberry Matcha','02_Strawberry_Matcha.jpg','Sweet strawberry meets earthy matcha in a bright, layered favorite.',11500],
+  ['mango-matcha','Mango Matcha','03_Mango_Matcha.jpg','Juicy mango and smooth matcha, made for a little sunshine.',11500],
+  ['vanilla-matcha','Vanilla Matcha','04_Vanilla_Matcha.jpg','A soft vanilla note rounds out our freshly whisked matcha.',10500],
+  ['caramel-matcha','Caramel Matcha','05_Caramel_Matcha.jpg','Toasty caramel folded into cool, vibrant matcha.',10500],
+  ['blueberry-matcha','Blueberry Matcha','06_Blueberry_Matcha.jpg','Juicy blueberry, creamy milk, and bright green matcha.',11500],
+  ['coconut-matcha','Coconut Matcha','07_Coconut_Matcha.jpg','A mellow coconut finish with the lift of real matcha.',10500],
+  ['pistachio-matcha','Pistachio Matcha','08_Pistachio_Matcha.jpg','Nutty pistachio and smooth matcha in one indulgent pour.',11500],
+  ['chocolate-matcha','Chocolate Matcha','09_Chocolate_Matcha.jpg','Deep chocolate balances the gentle bitterness of matcha.',11500],
+  ['raspberry-matcha','Raspberry Matcha','10_Raspberry_Matcha.jpg','A bright raspberry layer with our signature matcha.',11500],
+  ['dirty-matcha','Dirty Matcha','11_Dirty_Matcha.png','A bold espresso shot layered with creamy matcha.',11500],
+  ['honey-cinnamon-matcha','Honey Cinnamon Matcha','12_Honey_Cinnamon_Matcha.png','Smooth matcha with honey and warming cinnamon.',10500],
+  ['salted-caramel-matcha','Salted Caramel Matcha','13_Salted_Caramel_Matcha.png','A sweet caramel swirl with a delicate touch of salt.',10500],
+  ['sea-salted-vanilla-matcha','Sea Salted Vanilla Matcha','14_Sea_Salted_Vanilla_Matcha.png','Creamy vanilla matcha finished with a hint of sea salt.',10500],
+  ['spanish-matcha','Spanish Matcha','15_Spanish_Matcha.png','A rich, creamy Spanish style matcha layered over ice.',11500],
 ];
 
 const schema = `
@@ -30,6 +35,7 @@ const schema = `
     description TEXT NOT NULL, image_url TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0,
     price_piasters INTEGER CHECK (price_piasters IS NULL OR price_piasters >= 0),
     stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
+    unlimited_stock INTEGER NOT NULL DEFAULT 0 CHECK (unlimited_stock IN (0,1)),
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
     low_stock_threshold INTEGER NOT NULL DEFAULT 5 CHECK (low_stock_threshold >= 0),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -73,6 +79,10 @@ export async function createDatabase(input = './data/whisko.sqlite') {
 
   try {
     await client.executeMultiple(schema);
+    const productColumns = await client.execute('PRAGMA table_info(products)');
+    if (!productColumns.rows.some(column => column.name === 'unlimited_stock')) {
+      await client.execute('ALTER TABLE products ADD COLUMN unlimited_stock INTEGER NOT NULL DEFAULT 0 CHECK (unlimited_stock IN (0,1))');
+    }
   } catch (error) {
     client.close();
     throw error;
@@ -82,11 +92,27 @@ export async function createDatabase(input = './data/whisko.sqlite') {
   try {
     const result = await tx.execute('SELECT COUNT(*) AS n FROM products');
     if (Number(result.rows[0].n) === 0) {
-      for (const [position, [slug, name, image, description]] of catalogSeed.entries()) {
+      for (const [position, [slug, name, image, description, price]] of catalogSeed.entries()) {
         await tx.execute({
-          sql: `INSERT INTO products(id,slug,name,description,image_url,position,price_piasters,stock,active)
-            VALUES(?,?,?,?,?,?,NULL,0,1)`,
-          args: [crypto.randomUUID(), slug, name, description, `/products/${image}`, position],
+          sql: `INSERT INTO products(id,slug,name,description,image_url,position,price_piasters,stock,unlimited_stock,active)
+            VALUES(?,?,?,?,?,?,?,0,1,1)`,
+          args: [crypto.randomUUID(), slug, name, description, `/products/${image}`, position, price],
+        });
+      }
+    }
+    // Bring existing installations up to date without overwriting prices set by the owner.
+    for (const [position, [slug, name, image, description, price]] of catalogSeed.entries()) {
+      const existing = await tx.execute({ sql: 'SELECT id,price_piasters FROM products WHERE slug=?', args: [slug] });
+      if (existing.rows.length) {
+        if (existing.rows[0].price_piasters == null) {
+          await tx.execute({ sql: 'UPDATE products SET price_piasters=?,updated_at=strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\') WHERE id=?', args: [price, existing.rows[0].id] });
+        }
+        await tx.execute({ sql: 'UPDATE products SET stock=0,unlimited_stock=1,updated_at=strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\') WHERE id=?', args: [existing.rows[0].id] });
+      } else {
+        await tx.execute({
+          sql: `INSERT INTO products(id,slug,name,description,image_url,position,price_piasters,stock,unlimited_stock,active)
+            VALUES(?,?,?,?,?,?,?,0,1,1)`,
+          args: [crypto.randomUUID(), slug, name, description, `/products/${image}`, position, price],
         });
       }
     }

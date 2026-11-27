@@ -31,9 +31,10 @@ const productRow=row=>({
   imageUrl:row.image_url,
   pricePiasters:row.price_piasters,
   stock:row.stock,
+  unlimitedStock:Boolean(row.unlimited_stock),
   active:Boolean(row.active),
   lowStockThreshold:row.low_stock_threshold,
-  available:Boolean(row.active)&&row.price_piasters!==null&&row.stock>0,
+  available:Boolean(row.active)&&row.price_piasters!==null&&(Boolean(row.unlimited_stock)||row.stock>0),
 });
 const slugify=value=>value.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,70)||'matcha';
 
@@ -365,7 +366,7 @@ export async function createServer({db,env=process.env,rootDir=process.cwd()}){
           const product=await one(tx,'SELECT * FROM products WHERE id=? AND active=1',item.productId);
           if(!product)throw fail(409,'A matcha in your bag is no longer on the menu. Refresh your bag.');
           if(product.price_piasters===null)throw fail(409,`${product.name} is not available to order yet. Please check back soon.`);
-          if(product.stock<item.quantity)throw fail(409,`${product.name} does not have enough stock for that quantity.`);
+          if(!product.unlimited_stock&&product.stock<item.quantity)throw fail(409,`${product.name} does not have enough stock for that quantity.`);
           const line=product.price_piasters*item.quantity;
           if(!Number.isSafeInteger(line)||!Number.isSafeInteger(total+line))throw fail(400,'The order total is too large.');
           total+=line;
@@ -374,8 +375,10 @@ export async function createServer({db,env=process.env,rootDir=process.cwd()}){
         await run(tx,`INSERT INTO orders(id,code,confirmation_token_hash,customer_name,customer_phone,delivery_address,payment_method,status,subtotal_piasters)
           VALUES(?,?,?,?,?,?,'cash_on_delivery','pending',?)`,id,code,tokenHash,customer.name,customer.phone,customer.address,total);
         for(const{product,item,line}of selected){
-          const changed=await run(tx,'UPDATE products SET stock=stock-?,updated_at=? WHERE id=? AND stock>=?',item.quantity,now(),product.id,item.quantity);
-          if(changed.rowsAffected!==1)throw fail(409,`${product.name} has just sold out. Refresh your bag.`);
+          if(!product.unlimited_stock){
+            const changed=await run(tx,'UPDATE products SET stock=stock-?,updated_at=? WHERE id=? AND stock>=?',item.quantity,now(),product.id,item.quantity);
+            if(changed.rowsAffected!==1)throw fail(409,`${product.name} has just sold out. Refresh your bag.`);
+          }
           await run(tx,'INSERT INTO order_items(id,order_id,product_id,product_name,image_url,unit_price_piasters,quantity,options_json,line_total_piasters) VALUES(?,?,?,?,?,?,?,?,?)',crypto.randomUUID(),id,product.id,product.name,product.image_url,product.price_piasters,item.quantity,JSON.stringify(item.options),line);
         }
       });
@@ -434,7 +437,7 @@ export async function createServer({db,env=process.env,rootDir=process.cwd()}){
           salesPiasters:Number(sales.n),
           statusCounts:Object.fromEntries(counts.map(row=>[row.status,Number(row.count)])),
         };
-        return send(res,200,{stats,orders,products,lowStock:products.filter(product=>product.stock<=product.lowStockThreshold)});
+        return send(res,200,{stats,orders,products,lowStock:products.filter(product=>!product.unlimitedStock&&product.stock<=product.lowStockThreshold)});
       }
       if(method==='GET'&&pathname==='/api/admin/products'){
         const products=(await all(db,'SELECT * FROM products ORDER BY name')).map(productRow);
@@ -507,8 +510,8 @@ export async function createServer({db,env=process.env,rootDir=process.cwd()}){
           if(!order)throw fail(404,'Order not found.');
           if(!transitions[order.status]?.includes(body.status))throw fail(409,`An order cannot move from ${order.status.replaceAll('_',' ')} to ${body.status.replaceAll('_',' ')}.`);
           if(['rejected','cancelled'].includes(body.status)&&!order.stock_released){
-            const lines=await all(tx,'SELECT product_id,quantity FROM order_items WHERE order_id=?',order.id);
-            for(const line of lines)if(line.product_id)await run(tx,'UPDATE products SET stock=stock+?,updated_at=? WHERE id=?',line.quantity,now(),line.product_id);
+            const lines=await all(tx,'SELECT i.product_id,i.quantity,p.unlimited_stock FROM order_items i LEFT JOIN products p ON p.id=i.product_id WHERE i.order_id=?',order.id);
+            for(const line of lines)if(line.product_id&&!line.unlimited_stock)await run(tx,'UPDATE products SET stock=stock+?,updated_at=? WHERE id=?',line.quantity,now(),line.product_id);
             await run(tx,'UPDATE orders SET stock_released=1 WHERE id=?',order.id);
           }
           await run(tx,'UPDATE orders SET status=?,updated_at=? WHERE id=?',body.status,now(),order.id);
